@@ -56,3 +56,34 @@ def process_image(image):
     np_image = np_image.transpose((2,0,1))
 
     return torch.from_numpy(np_image)
+
+def checkpoint_model(model, arch, trainset, path):
+    # Create the folder directory.
+    pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+    # Get model parameters and state
+    input_size = model.classifier.hidden_layers[0].in_features
+    hidden_size = [each.out_features for each in model.classifier.hidden_layers]
+    output_size = 102
+    model.class_to_idx = trainset.class_to_idx
+
+    #checkpoint = torch.load(filepath)
+    checkpoint = {'architecture': arch,
+                  'input_size': input_size,
+                  'hidden_size': hidden_size,
+                  'output_size': output_size,
+                  'state_dict': model.state_dict(),
+                  'class_indicies': model.class_to_idx}
+
+    print('Checkpointing parameters {} in directory {}/p2_checkpoint.pth'.format(type(checkpoint), path))
+
+    torch.save(checkpoint, path+'/p2_checkpoint.pth')
+
+def load_checkpoint(path):
+    # Load checkpoint
+    checkpoint = torch.load(path)
+    model = load_pretrained_model(checkpoint['architecture'])
+    model.classifier = Network(checkpoint['input_size'], checkpoint['hidden_size'], checkpoint['output_size'], dropout=0.2)
+    model.load_state_dict(checkpoint['state_dict'])
+    model.class_to_idx = checkpoint['class_indicies']
+
+    return model
