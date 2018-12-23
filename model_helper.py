@@ -87,3 +87,150 @@ def load_checkpoint(path):
     model.class_to_idx = checkpoint['class_indicies']
 
     return model
+
+
+def load_pretrained_model(arch):
+    # Choice of three pretrained models.
+    if arch == 'vgg13':
+        model = models.vgg13(pretrained=True)
+    elif arch == 'vgg16':
+        model = models.vgg16(pretrained=True)
+    elif arch == 'alexnet':
+        model = models.alexnet(pretrained=True)
+    else:
+        print('Uknown model architecture, please choose from alexnet, vgg13 or vgg16.')
+
+    # Freeze Parameters
+    for parameters in model.parameters():
+        parameters.requires_grad = False
+
+    return model
+
+
+def predict(image_tensor, model, gpu, topk, category_names, debug=False):
+    ''' Predict the class (or classes) of an image using a trained deep learning model.
+    '''
+    if gpu:
+        image_tensor = image_tensor.type(torch.cuda.FloatTensor).unsqueeze(0)
+        model.to('cuda')
+    else:
+        image_tensor = image_tensor.type(torch.FloatTensor).unsqueeze(0)
+        model.to('cpu')
+
+    model.eval()
+    with torch.no_grad():
+        result = torch.exp(model.forward(image_tensor))
+
+    # Unpack result probabilities and indicies
+    probs, indicies = result.topk(topk)
+    probs = probs.cpu().numpy().tolist()[0]
+    indicies = indicies.cpu().numpy().tolist()[0]
+
+    reverse_dictionary = {val: key for key, val in model.class_to_idx.items()}
+    topk_classes = [reverse_dictionary[index] for index in indicies]
+    if category_names is not None:
+        with open(category_names, 'r') as f:
+            cat_to_name = json.load(f)
+        class_names = [cat_to_name[c] for c in topk_classes]
+        return probs, class_names
+    else:
+        return probs, topk_classes
+
+
+class Network(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, dropout=0.2):
+        super().__init__()
+        # Add the input layer
+        self.hidden_layers = nn.ModuleList([nn.Linear(input_size, hidden_size[0])])
+
+        # Add a variable number of more hidden layers
+        layer_sizes = zip(hidden_size[:-1], hidden_size[1:])
+        self.hidden_layers.extend([nn.Linear(h1, h2) for h1, h2 in layer_sizes])
+
+        self.output = nn.Linear(hidden_size[-1], output_size)
+
+        self.dropout = nn.Dropout(p=dropout)
+
+    def forward(self, x):
+        ''' Forward pass through the network, returns the output logits '''
+
+        # Forward through each layer in `hidden_layers`, with ReLU activation and dropout
+        for linear in self.hidden_layers:
+            x = F.relu(linear(x))
+            x = self.dropout(x)
+
+        x = self.output(x)
+
+        return F.log_softmax(x, dim=1)
+
+
+def configure_criterion_optimizer(model, learning_rate):
+    criterion = nn.NLLLoss()
+    optimizer = optim.Adam(model.classifier.parameters(), lr=learning_rate)
+
+    return criterion, optimizer
+
+
+def validation(model, validloader, criterion):
+    test_loss = 0
+    accuracy = 0
+
+    for ii, (inputs, labels) in enumerate(validloader):
+        #images.resize_(images.shape[0], 784)
+        images, labels = inputs.to('cuda'), labels.to('cuda')
+
+        output = model.forward(images)
+        test_loss += criterion(output, labels).item()
+
+        ps = torch.exp(output)
+        equality = (labels.data == ps.max(dim=1)[1])
+        accuracy += equality.type(torch.FloatTensor).mean()
+
+    return test_loss, accuracy
+
+
+def train_model(model, epochs, criterion, optimizer, trainloader, validloader, gpu_enabled):
+
+    print_every = 40
+    steps = 0
+    running_loss = 0
+
+    # change to user specified device
+    if gpu_enabled:
+        model.to('cuda')
+
+    for e in range(epochs):
+
+        for ii, (inputs, labels) in enumerate(trainloader):
+            steps += 1
+
+            if gpu_enabled:
+                inputs, labels = inputs.to('cuda'), labels.to('cuda')
+
+            optimizer.zero_grad()
+
+            # Forward and backward passes
+            outputs = model.forward(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+
+            if steps % print_every == 0:
+
+                model.eval()
+
+                with torch.no_grad():
+                    test_loss, accuracy = validation(model, validloader, criterion)
+
+                print("Epoch: {}/{}... ".format(e+1, epochs),
+                      "Training Loss: {:.4f}".format(running_loss/print_every),
+                      "Validation Loss: {:.4f}".format(test_loss/len(validloader)),
+                      "Validation Accuracy: {:.4f}".format(accuracy/len(validloader)))
+
+                running_loss = 0
+
+                model.train()
+
+    return model
