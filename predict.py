@@ -30,3 +30,20 @@ parser.add_argument('--gpu', action="store_true", default=False, help='Use GPU f
 
 arguments = parser.parse_args()
 print('Running predict.py with the following arguments {}'.format(arguments))
+
+# Load checkpoint and rebuild model
+model = model_helper.load_checkpoint(arguments.checkpoint)
+
+# Preprocess image into image tensor
+image_tensor = model_helper.process_image(arguments.input)
+
+# Return top K most likely classes and their probabilities
+probabilities, topk_classes = model_helper.predict(image_tensor, model, arguments.gpu, arguments.top_k, arguments.category_names, debug=True)
+
+position = 1
+for p, c in zip(probabilities, topk_classes):
+    if arguments.category_names is not None:
+        print('#{} Prediction: {} with {:.4f}% accuracy.'.format(position, c, p*100))
+    else:
+        print('#{} Prediction: Class {} with {:.4f}% accuracy.'.format(position, c, p*100))
+    position += 1
