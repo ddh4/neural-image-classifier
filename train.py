@@ -33,3 +33,22 @@ arguments = parser.parse_args()
 print('Running train.py with the following arguments {}'.format(arguments))
 if not arguments.gpu:
     print('Warning: training using the CPU and may take a while. Set argument --gpu if cuda enabled.')
+    
+datasets, loaders = data_helper.load_transform_data(arguments.data_dir)
+
+model = model_helper.load_pretrained_model(arguments.arch)
+
+if arguments.arch == 'alexnet':
+    in_features = model.classifier[1].in_features
+else:
+    in_features = model.classifier[0].in_features
+
+classifier = model_helper.Network(in_features, arguments.hidden_units, 102)
+
+model.classifier = classifier
+
+criterion, optimizer = model_helper.configure_criterion_optimizer(model, arguments.learning_rate)
+
+model = model_helper.train_model(model, arguments.epochs, criterion, optimizer, loaders['trainloader'], loaders['validloader'], arguments.gpu)
+
+model_helper.checkpoint_model(model, arguments.arch, datasets['trainset'], arguments.save_dir)
